@@ -27,6 +27,37 @@ interface Firework {
   burstShape: number;
 }
 
+export interface FireworksProps {
+  /** Base interval between launches in seconds (default: 3.3) */
+  launchInterval?: number;
+  /** Extra random jitter added to launch interval (default: 0.5) */
+  launchIntervalJitter?: number;
+  /** Cooldown base after each launch in seconds (default: 0.3) */
+  launchCooldown?: number;
+  /** Extra random jitter on cooldown (default: 1.2) */
+  launchCooldownJitter?: number;
+  /** Max delta cap per frame in seconds — lower = slower motion (default: 0.005) */
+  maxDelta?: number;
+  /** Gravity applied to rockets (default: 0.5) */
+  rocketGravity?: number;
+  /** Gravity applied to burst particles (default: 1.2) */
+  particleGravity?: number;
+  /** Drag factor on particles per second (default: 0.4) */
+  particleDrag?: number;
+  /** Rendered point size for burst particles (default: 0.35) */
+  particleSize?: number;
+  /** Base particle count per burst (default: 80) */
+  particleCount?: number;
+  /** Random extra particles added to base count (default: 120) */
+  particleCountJitter?: number;
+  /** Elapsed seconds before burst-multi threshold starts decaying (default: 120) */
+  burstDecayStart?: number;
+  /** Duration in seconds over which burst threshold decays to 0 (default: 360) */
+  burstDecayDuration?: number;
+  /** Number of background stars (default: 600) */
+  starCount?: number;
+}
+
 const COLORS = [
   new THREE.Color(0xff4444),
   new THREE.Color(0xff8800),
@@ -154,9 +185,9 @@ function createBurstParticles(
   origin: THREE.Vector3,
   color: THREE.Color,
   burstShape: number,
+  count: number,
 ): Particle[] {
   const particles: Particle[] = [];
-  const count = 80 + Math.floor(Math.random() * 120);
   const baseSize = 0.18 + Math.random() * 0.12;
 
   switch (burstShape) {
@@ -326,10 +357,28 @@ function createStars(count: number): THREE.Points {
   return new THREE.Points(geometry, material);
 }
 
-export default function FireworksScene() {
+export default function FireworksScene(props: FireworksProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
+  const cfg = useRef({
+    launchInterval: props.launchInterval ?? 3.3,
+    launchIntervalJitter: props.launchIntervalJitter ?? 0.5,
+    launchCooldown: props.launchCooldown ?? 0.3,
+    launchCooldownJitter: props.launchCooldownJitter ?? 1.2,
+    maxDelta: props.maxDelta ?? 0.005,
+    rocketGravity: props.rocketGravity ?? 0.5,
+    particleGravity: props.particleGravity ?? 1.2,
+    particleDrag: props.particleDrag ?? 0.4,
+    particleSize: props.particleSize ?? 0.35,
+    particleCount: props.particleCount ?? 80,
+    particleCountJitter: props.particleCountJitter ?? 120,
+    burstDecayStart: props.burstDecayStart ?? 120,
+    burstDecayDuration: props.burstDecayDuration ?? 360,
+    starCount: props.starCount ?? 600,
+  });
+
   useEffect(() => {
+    const c = cfg.current;
     if (!containerRef.current) return;
 
     const scene = new THREE.Scene();
@@ -352,7 +401,7 @@ export default function FireworksScene() {
     renderer.toneMappingExposure = 1.2;
     containerRef.current.appendChild(renderer.domElement);
 
-    const stars = createStars(600);
+    const stars = createStars(c.starCount);
     scene.add(stars);
 
     const ambientLight = new THREE.AmbientLight(0x111133, 0.3);
@@ -362,7 +411,7 @@ export default function FireworksScene() {
 
     const fireworks: Firework[] = [];
     let lastLaunch = 0;
-    const launchInterval = 0.3 + Math.random() * 0.5 + 3;
+    const interval = c.launchInterval + Math.random() * c.launchIntervalJitter;
 
     const particleSystems: THREE.Points[] = [];
 
@@ -407,14 +456,14 @@ export default function FireworksScene() {
 
     function animate() {
       timer.update();
-      const delta = Math.min(timer.getDelta(), 0.005);
+      const delta = Math.min(timer.getDelta(), c.maxDelta);
       const elapsed = timer.getElapsed();
 
       lastLaunch += delta;
-      if (lastLaunch > launchInterval) {
+      if (lastLaunch > interval) {
         const burstThreshold = Math.max(
           0,
-          1 - Math.max(0, elapsed - 120) / 360,
+          1 - Math.max(0, elapsed - c.burstDecayStart) / c.burstDecayDuration,
         );
         const burstCount =
           Math.random() > burstThreshold
@@ -423,7 +472,10 @@ export default function FireworksScene() {
         for (let i = 0; i < burstCount; i++) {
           setTimeout(() => launchFirework(), i * 100);
         }
-        lastLaunch = -(0.3 + Math.random() * 1.2);
+        lastLaunch = -(
+          c.launchCooldown +
+          Math.random() * c.launchCooldownJitter
+        );
       }
 
       for (const ps of particleSystems) {
@@ -437,17 +489,21 @@ export default function FireworksScene() {
         const fw = fireworks[fi];
 
         if (!fw.rocket.exploded) {
-          fw.rocket.velocity.y -= 0.5 * delta;
+          fw.rocket.velocity.y -= c.rocketGravity * delta;
           fw.rocket.position.add(
             fw.rocket.velocity.clone().multiplyScalar(delta),
           );
 
           if (fw.rocket.velocity.y <= 0 || fw.rocket.life <= 0) {
             fw.rocket.exploded = true;
+            const count =
+              c.particleCount +
+              Math.floor(Math.random() * c.particleCountJitter);
             fw.particles = createBurstParticles(
               fw.rocket.position,
               fw.rocket.color,
               fw.burstShape,
+              count,
             );
           }
 
@@ -480,7 +536,7 @@ export default function FireworksScene() {
         }
 
         let allDead = true;
-        const gravity = new THREE.Vector3(0, -1.2, 0);
+        const gravity = new THREE.Vector3(0, -c.particleGravity, 0);
 
         for (let pi = fw.particles.length - 1; pi >= 0; pi--) {
           const p = fw.particles[pi];
@@ -497,7 +553,7 @@ export default function FireworksScene() {
           if (p.trail.length > p.trailLength) p.trail.shift();
 
           p.velocity.add(gravity.clone().multiplyScalar(delta));
-          p.velocity.multiplyScalar(1 - delta * 0.4);
+          p.velocity.multiplyScalar(1 - delta * c.particleDrag);
           p.position.add(p.velocity.clone().multiplyScalar(delta));
         }
 
@@ -542,7 +598,7 @@ export default function FireworksScene() {
 
           const shapeIdx = fw.burstShape % textures.length;
           const mat = new THREE.PointsMaterial({
-            size: 0.35,
+            size: c.particleSize,
             transparent: true,
             opacity: 0.9,
             blending: THREE.AdditiveBlending,
